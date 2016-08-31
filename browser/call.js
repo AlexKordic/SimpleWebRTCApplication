@@ -10,7 +10,9 @@ function ConferenceMachinery(myName, remoteVideo, localVideo) {
 	this._localStream = false;
 	this._partnerName = false;
 	this._remoteStream = false;
-	this._should_i_call = false;
+	this._shouldICall = false;
+	this._soundEnabled = true;
+	this._videoEnabled = true;
 	this.remoteVideo = remoteVideo;
 	this.localVideo = localVideo;
 	this.myName = myName;
@@ -34,12 +36,13 @@ function ConferenceMachinery(myName, remoteVideo, localVideo) {
 	this.raiseSocketEvent("expectCall"); // propagate to parent for missed call
 	this.events.callBlocked = jQuery.Callbacks("unique");
 	this.events.answeringCall = jQuery.Callbacks("unique");
+	this.events.mute = jQuery.Callbacks("unique"); // not from server
 
 	this.socket.on("callNow", function(contact) {
 		console.log("callNow", contact);
 		self._partnerName = contact.name;
 		self.stop();
-		self._should_i_call = true;
+		self._shouldICall = true;
 		self.start();
 	});
 	this.socket.on("message", this.onMessage.bind(this))
@@ -71,15 +74,14 @@ ConferenceMachinery.prototype.raise = function(eventName, eventParams) {
 ConferenceMachinery.prototype.startMyVideo = function() {
 	var self = this;
 	navigator.mediaDevices.getUserMedia({
-		audio: false,
+		audio: true,
 		video: true
 	}).then(function (stream) {
 		// got local stream:
 		self.localVideo.src = window.URL.createObjectURL(stream);
 		self._localStream = stream;
-		self.sendMessage('got user media'); // this is used as we cannot establish connection before acquiring local stream
 		console.log("initialized my stream");
-		if(self._should_i_call) {
+		if(self._shouldICall) {
 			console.log("starting after my stream init");
 			self.start();
 		}
@@ -135,10 +137,11 @@ ConferenceMachinery.prototype.start = function() {
 
 			this.peerConnection.addStream(this._localStream);
 
+			this._resetMute();
 			this._started = true;
 
-			console.log("am i calling", this._should_i_call);
-			if(this._should_i_call) {
+			console.log("am i calling", this._shouldICall);
+			if(this._shouldICall) {
 				console.log('Sending offer to peer');
 				this.peerConnection.createOffer(function(sessionDescription) {
 					// Set Opus as the preferred codec in SDP if Opus is present.
@@ -179,12 +182,6 @@ ConferenceMachinery.prototype.alreadyTalking = function() {
 ConferenceMachinery.prototype.onMessage = function(peerName, message) {
 	var self = this;
 	console.log('onMessage:', message);
-	if (message === 'got user media') {
-		// this.start();
-		console.warn("got user media - return");
-		return;
-	}
-
 	if (message.type === 'offer') {
 		if(peerName != self._partnerName) {
 			console.log("new peer name encuntered !");
@@ -197,12 +194,12 @@ ConferenceMachinery.prototype.onMessage = function(peerName, message) {
 			console.warn("preparing to accept call from", peerName);
 			self._partnerName = peerName;
 			self.stop();
-			self._should_i_call = false;
+			self._shouldICall = false;
 			self.start();
 			self.raise("answeringCall", peerName);
 		}
 
-		if (! this._should_i_call && ! this._started) {
+		if (! this._shouldICall && ! this._started) {
 			this.start();
 		}
 		console.warn("calling peerConnection.setRemoteDescription()");
@@ -225,7 +222,19 @@ ConferenceMachinery.prototype.onMessage = function(peerName, message) {
 		return;
 	}
 
-	if (message.type === 'answer' && this._started) {
+	if (message.type === 'muteAudio') {
+		console.log("muting peer", message.shouldEnable);
+		this.remoteVideo.muted = ! message.shouldEnable; // reverse logic
+	} else if (message.type === 'muteVideo') {
+		console.log("hiding peer", message.shouldEnable);
+		if(message.shouldEnable) {
+			// hide video
+			this.remoteVideo.style.opacity = 1.0;
+		} else {
+			// show video
+			this.remoteVideo.style.opacity = 0.0;
+		}
+	} else if (message.type === 'answer' && this._started) {
 		console.warn("got answer, peerConnection.setRemoteDescription()");
 		this.peerConnection.setRemoteDescription(new RTCSessionDescription(message));
 	} else if (message.type === 'candidate' && this._started) {
@@ -234,23 +243,90 @@ ConferenceMachinery.prototype.onMessage = function(peerName, message) {
 			candidate: message.candidate
 		});
 		this.peerConnection.addIceCandidate(candidate);
-	} else if (message === 'bye' && this._started) {
-		console.log('Session terminated.');
-		this._should_i_call = false;
+	} else if (message === 'hangup' && this._started) {
+		console.log('peer terminated session');
+		this._shouldICall = false;
 		this.stop();
+		this.remoteVideo.src = "";
 	} else {
 		console.error("NOT handling", message);
 	}
 
 }
 
+ConferenceMachinery.prototype._resetMute = function() {
+	this._soundEnabled = true;
+	this._videoEnabled = true;
+	this.remoteVideo.muted = false;
+	this.remoteVideo.style.opacity = 1.0;
+	this.raise("mute", {isAudio: true, state: this._soundEnabled});
+	this.raise("mute", {isAudio: false, state: this._videoEnabled});
+	this.localVideo.style.opacity = 1.0;
+}
+
 // EXTERNAL INTERFACE
 ConferenceMachinery.prototype.hangup = function() {
 	console.log('Hanging up.');
 	this.stop();
-	this.sendMessage('bye');
+	this.remoteVideo.src = "";
+	this.sendMessage('hangup');
 }
-
+ConferenceMachinery.prototype.isSoundEnabled = function() {
+	return this._soundEnabled;
+}
+ConferenceMachinery.prototype.isVideoEnabled = function() {
+	return this._videoEnabled;
+}
+ConferenceMachinery.prototype.enableSound = function(shouldEnable) {
+	this._soundEnabled = shouldEnable;
+	this.sendMessage({type: "muteAudio", shouldEnable: shouldEnable})
+	this.raise("mute", {isAudio: true, state: shouldEnable})
+	// this._enableSoundOrVideo(shouldEnable, true);
+}
+ConferenceMachinery.prototype.enableVideo = function(shouldEnable) {
+	this._videoEnabled = shouldEnable;
+	this.sendMessage({type: "muteVideo", shouldEnable: shouldEnable})
+	if(shouldEnable) {
+		// hide video
+		this.localVideo.style.opacity = 1.0;
+	} else {
+		// show video
+		this.localVideo.style.opacity = 0.0;
+	}
+	this.raise("mute", {isAudio: false, state: shouldEnable})
+	// this._enableSoundOrVideo(shouldEnable, false);
+}
+ConferenceMachinery.prototype._enableSoundOrVideo = function(shouldEnable, isSound) {
+	if(isSound) {
+		this._soundEnabled = shouldEnable;
+	} else {
+		this._videoEnabled = shouldEnable;
+	} 
+	if(this.peerConnection) {
+		if(isSound) {
+			console.log("enable/disable audio", shouldEnable);
+			conference.peerConnection.getLocalStreams()[0].getAudioTracks()[0].enabled = shouldEnable;
+		} else {
+			console.log("enable/disable video", shouldEnable);
+			conference.peerConnection.getLocalStreams()[0].getVideoTracks()[0].enabled = shouldEnable;
+		}
+		// var streams = this.peerConnection.getLocalStreams();
+		// for(var streamIndex=0; streamIndex<streams.length; streamIndex) {
+		// 	var stream = streams[streamIndex];
+		// 	if(stream) {
+		// 		var tracks = isSound ? stream.getAudioTracks() : stream.getVideoTracks();
+		// 		for(var trackIndex=0; trackIndex<tracks.length; trackIndex++) {
+		// 			var track = tracks[trackIndex];
+		// 			if(track) {
+		// 				track.enabled = shouldEnable;
+		// 			}
+		// 		}
+		// 	}
+		// }
+	}
+	this.raise("mute", {isAudio: isSound, state: shouldEnable})
+	console.log("_enableSoundOrVideo() complete");
+}
 
 
 

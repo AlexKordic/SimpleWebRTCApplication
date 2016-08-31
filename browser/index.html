@@ -19,6 +19,7 @@
 			//
 			// Set function which will receive contact list to call
 			window.conference.events.contactsUpdate.add(updateContactList);
+			window.conference.events.mute.add(showMuteState);
 		}
 
 		function updateContactList(knownEventName, contactList) {
@@ -42,6 +43,24 @@
 			}
 		}
 
+		function showMuteState(knownEventName, params) {
+			if(params.isAudio) {
+				var element = jQuery("#audioMuteIndicatorElement");
+				if(params.state) {
+					element.text("sound on ");
+				} else { 
+					element.text("sound off");
+				}
+			} else {
+				var element = jQuery("#videoMuteIndicatorElement");
+				if(params.state) {
+					element.text("video on");
+				} else { 
+					element.text("video off");
+				}
+			}
+		}
+
 	</script>
 
 </head>
@@ -53,6 +72,14 @@
 	<div id="videos">
 		<video id="localVideo" autoplay muted></video>
 		<video id="remoteVideo" autoplay></video>
+	</div>
+	<h2>Actions:</h2>
+	<div id="actions">
+		<button onclick="window.conference.hangup()">Hangup</button>
+		<span id="audioMuteIndicatorElement">sound on</span>
+		<button onclick="window.conference.enableSound(! window.conference.isSoundEnabled())">Mute audio</button>
+		<span id="videoMuteIndicatorElement">video on</span>
+		<button onclick="window.conference.enableVideo(! window.conference.isVideoEnabled())">Mute video</button>
 	</div>
 
 	<h1>Contacts online</h1>
