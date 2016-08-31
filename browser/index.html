@@ -3,17 +3,43 @@
 
 <head>
 
-	<title>Realtime communication with WebRTC</title>
+	<title>Simple WebRTC application</title>
 
 	<link rel="stylesheet" href="/main.css" />
 
 	<script type="text/javascript">
 
 		function onLoad() {
-			var room_name = prompt('Enter room name:');
+			var myName = prompt('Enter your name:');
 			var remoteVideo = document.querySelector('#remoteVideo');
 			var localVideo = document.querySelector('#localVideo');
-			window.call = new Call(room_name, remoteVideo, localVideo);
+			// 
+			// Create conference object to add video communication to your page:
+			window.conference = new ConferenceMachinery(myName, remoteVideo, localVideo);
+			//
+			// Set function which will receive contact list to call
+			window.conference.events.contactsUpdate.add(updateContactList);
+		}
+
+		function updateContactList(knownEventName, contactList) {
+			// recreating contact list
+			var container = jQuery("#contactListElement");
+			container.empty();
+			for(var i=0; i<contactList.length; i++) {
+				var contact = contactList[i];
+				if(contact.name == window.conference.myName) {
+					console.log("skipping my record in contact list");
+					continue;
+				}
+				console.log("writting contact", contact.name);
+				var item = $('<li class="contact"/>').text(contact.name).appendTo(container);
+				(function(contactToCall) {
+					item.click(function() {
+						// on click call this contact:
+						window.conference.call(contactToCall);
+					});
+				})(contact);
+			}
 		}
 
 	</script>
@@ -22,15 +48,22 @@
 
 <body onload="onLoad()">
 
-	<h1>Realtime communication with WebRTC</h1>
+	<h1>Conference participants</h1>
 
 	<div id="videos">
 		<video id="localVideo" autoplay muted></video>
 		<video id="remoteVideo" autoplay></video>
 	</div>
 
+	<h1>Contacts online</h1>
+	<div>
+		<ol id="contactListElement"></ol>
+	</div>
+
+
 	<script src="/socket.io/socket.io.js"></script>
 	<script src="lib/adapter.js"></script>
+	<script src="lib/jquery-3.1.0.js"></script>
 	<script src="call.js"></script>
 
 </body>

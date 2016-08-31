@@ -1,43 +1,74 @@
 'use strict';
 
 
-function Call(room_name, remoteVideo, localVideo) {
+
+
+
+function ConferenceMachinery(myName, remoteVideo, localVideo) {
 	var self = this;
 	this._started = false;
 	this._localStream = false;
-	this._isChannelReady = false;
+	this._partnerName = false;
 	this._remoteStream = false;
 	this._should_i_call = false;
 	this.remoteVideo = remoteVideo;
 	this.localVideo = localVideo;
-	this.room_name = room_name;
+	this.myName = myName;
 
+	this.events = {};
 	this.socket = io.connect();
-	this.socket.emit('create or join', this.room_name);
-	this.socket.on("created", function(room) {
-		console.log("i created the room so i will call peer");
-		self._should_i_call = true;
-	})
-	this.socket.on("full", function(room) {
-		console.log("servers says room is full !");
-	})
-	this.socket.on("join", function(room) {
-		console.log("someone joined your room, he will call you");
-		self._isChannelReady = true;
-	})
-	this.socket.on("joined", function(room) {
-		console.log("joined", room);
-		self._isChannelReady = true;
-	})
-	this.socket.on("log", function(array) {
-		console.log.apply(console, array);
-	})
+	
+	this.socket.on("connect", function() {
+		// send first login on connection
+		self.socket.emit('login', self.myName);
+	});
 
+	this.socket.on('log', function(array) {
+		console.log.apply(console, array);
+	});
+
+	this.raiseSocketEvent("loginError");
+	this.raiseSocketEvent("loginSuccess");
+	this.raiseSocketEvent("contactsUpdate");
+	this.raiseSocketEvent("callAttemptUnsuccessful"); // answer to callAttempt
+	this.raiseSocketEvent("expectCall"); // propagate to parent for missed call
+	this.events.callBlocked = jQuery.Callbacks("unique");
+	this.events.answeringCall = jQuery.Callbacks("unique");
+
+	this.socket.on("callNow", function(contact) {
+		console.log("callNow", contact);
+		self._partnerName = contact.name;
+		self.stop();
+		self._should_i_call = true;
+		self.start();
+	});
 	this.socket.on("message", this.onMessage.bind(this))
 
 	this.startMyVideo();
 }
-Call.prototype.startMyVideo = function() {
+ConferenceMachinery.prototype.call = function(contact) {
+	var contactName = contact.name;
+	console.log("call contact", contactName);
+	this.socket.emit('callAttempt', contactName);
+}
+/// Just propagate event to parent
+ConferenceMachinery.prototype.raiseSocketEvent = function(eventName) {
+	var self = this;
+	self.events[eventName] = jQuery.Callbacks("unique"); // < creating event
+	self.socket.on(eventName, function(eventParams) {
+		self.raise(eventName, eventParams);
+	});
+}
+ConferenceMachinery.prototype.raise = function(eventName, eventParams) {
+	// fire events to parent
+	console.log("raising event", eventName, eventParams);
+	var callbackBasket = this.events[eventName];
+	if (callbackBasket != undefined) {
+		callbackBasket.fire(eventName, eventParams); // hm is eventName redundant here ?
+	}
+}
+
+ConferenceMachinery.prototype.startMyVideo = function() {
 	var self = this;
 	navigator.mediaDevices.getUserMedia({
 		audio: false,
@@ -47,26 +78,38 @@ Call.prototype.startMyVideo = function() {
 		self.localVideo.src = window.URL.createObjectURL(stream);
 		self._localStream = stream;
 		self.sendMessage('got user media'); // this is used as we cannot establish connection before acquiring local stream
+		console.log("initialized my stream");
 		if(self._should_i_call) {
+			console.log("starting after my stream init");
 			self.start();
 		}
 	}).catch(function(e) {
 		console.log('getUserMedia() error: ' + e.name);
 	});
 }
-Call.prototype.sendMessage = function(message) {
-	console.log('Client sending message: ', message);
-	this.socket.emit('message', message);
+ConferenceMachinery.prototype.sendMessage = function(message, specificPeerName) {
+	if(specificPeerName == undefined) {
+		// use our conference partner:
+		specificPeerName = this._partnerName;
+	}
+	if(! specificPeerName) {
+		console.error("peerName missing !", message);
+		return;
+		// how to report this error ?
+	}
+	console.log('I', this.myName, 'SENDING to=', specificPeerName, "msg=", message);
+	this.socket.emit('message', specificPeerName, message);
 }
-Call.prototype.start = function() {
+ConferenceMachinery.prototype.start = function() {
 	var self = this;
-	console.log("start()", this._started, this._localStream, this._isChannelReady);
-	if(this._started === false && this._localStream !== false && this._isChannelReady !== false) {
+	console.log("++ start()", this._started, this._localStream); //, this._isChannelReady);
+	if(this._started === false && this._localStream !== false) { //&& this._isChannelReady !== false) {
 		try {
 			// creating connection
+			console.warn("creating peerConnection");
 			this.peerConnection = new RTCPeerConnection(null);
 			this.peerConnection.onicecandidate = function(event) {
-				console.log('icecandidate event: ', event);
+				console.warn('icecandidate event: ', event);
 				if (event.candidate) {
 					self.sendMessage({
 						type: 'candidate',
@@ -80,11 +123,12 @@ Call.prototype.start = function() {
 			};
 			this.peerConnection.onaddstream = function(event) {
 				// setting stream to video element:
+				console.warn("adding remote stream", event.stream);
 				self.remoteVideo.src = window.URL.createObjectURL(event.stream);
 				self._remoteStream = event.stream;
 			};
 			this.peerConnection.onremovestream = function(event) {
-				console.log('Remote stream removed. Event: ', event);
+				console.warn('Remote stream removed. Event: ', event);
 				// this will not happen, how to determine call has dropped ??
 			};
 			console.log('Created RTCPeerConnnection');
@@ -100,7 +144,7 @@ Call.prototype.start = function() {
 					// Set Opus as the preferred codec in SDP if Opus is present.
 					//  sessionDescription.sdp = preferOpus(sessionDescription.sdp);
 					self.peerConnection.setLocalDescription(sessionDescription);
-					console.log('creating-offer sending message', sessionDescription);
+					console.warn('creating-offer sending message', sessionDescription);
 					self.sendMessage(sessionDescription);
 				}, function (event) {
 					console.log('createOffer() error: ', event);
@@ -109,34 +153,80 @@ Call.prototype.start = function() {
 		} catch(e) {
 			console.log("EXCEPTION in start[" + e.message + "]: " + e.sourceURL + ': ' + e.line + "\n" + e.stack);
 		}
+	} else {
+		console.log("cant start now.");
 	}
 }
-Call.prototype.stop = function(message) {
+ConferenceMachinery.prototype.stop = function(message) {
+	console.log("stopping remote c", this._started, this.peerConnection);
 	this._started = false;
-	this.peerConnection.close();
-	this.peerConnection = null;
+	if(this.peerConnection) {
+		this.peerConnection.close();
+		this.peerConnection = null;
+	}
 }
-Call.prototype.onMessage = function(message) {
+ConferenceMachinery.prototype.alreadyTalking = function() {
+	var connected = (
+		this.peerConnection != undefined && 
+		this.peerConnection.iceConnectionState == "connected");
+		// this.peerConnection.connectionState != "disconnected" && 
+		// this.peerConnection.connectionState != "failed" && 
+		// this.peerConnection.connectionState != "closed");
+	// DONE: inspect .signalingState also ? ==> NOT FOR THIS PURPOSE.
+	console.log("is talking=", connected);
+	return connected;
+}
+ConferenceMachinery.prototype.onMessage = function(peerName, message) {
 	var self = this;
-	console.log('Client received message:', message);
+	console.log('onMessage:', message);
 	if (message === 'got user media') {
-		this.start();
-	} else if (message.type === 'offer') {
+		// this.start();
+		console.warn("got user media - return");
+		return;
+	}
+
+	if (message.type === 'offer') {
+		if(peerName != self._partnerName) {
+			console.log("new peer name encuntered !");
+			// decide to accept call ?
+			if(this.alreadyTalking()) {
+				console.error("attempted call from", peerName);
+				self.raise("callBlocked", peerName);
+				return;
+			}
+			console.warn("preparing to accept call from", peerName);
+			self._partnerName = peerName;
+			self.stop();
+			self._should_i_call = false;
+			self.start();
+			self.raise("answeringCall", peerName);
+		}
+
 		if (! this._should_i_call && ! this._started) {
 			this.start();
 		}
+		console.warn("calling peerConnection.setRemoteDescription()");
 		this.peerConnection.setRemoteDescription(new RTCSessionDescription(message));
 		console.log('Sending answer to peer.');
 		this.peerConnection.createAnswer().then(
 			function(sessionDescription) {
 				self.peerConnection.setLocalDescription(sessionDescription);
-				console.log('creating-answer sending message', sessionDescription);
+				console.warn('creating-answer sending message', sessionDescription);
 				self.sendMessage(sessionDescription);
 			}, function (error) {
 				console.log('Failed to create session description: ' + error.toString());
 			}
 		);
-	} else if (message.type === 'answer' && this._started) {
+		return;
+	} 
+
+	if(peerName != self._partnerName) {
+		console.error("ignoring message from unknown peer=", peerName, "partner=", self._partnerName);
+		return;
+	}
+
+	if (message.type === 'answer' && this._started) {
+		console.warn("got answer, peerConnection.setRemoteDescription()");
 		this.peerConnection.setRemoteDescription(new RTCSessionDescription(message));
 	} else if (message.type === 'candidate' && this._started) {
 		var candidate = new RTCIceCandidate({
@@ -148,12 +238,14 @@ Call.prototype.onMessage = function(message) {
 		console.log('Session terminated.');
 		this._should_i_call = false;
 		this.stop();
+	} else {
+		console.error("NOT handling", message);
 	}
 
 }
 
 // EXTERNAL INTERFACE
-Call.prototype.hangup = function() {
+ConferenceMachinery.prototype.hangup = function() {
 	console.log('Hanging up.');
 	this.stop();
 	this.sendMessage('bye');
