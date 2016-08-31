@@ -22,12 +22,16 @@ var app = https.createServer(httpsOptions, function(req, res) {
 var io = socketIO.listen(app);
 
 
+//
+// Data storage class
 function Books() {
 	this.peers = {};
 }
 Books.prototype.exist = function(name) {
 	return this.peers[name];
 }
+//
+// returns all peers
 Books.prototype.participants = function() {
 	var ret = [];
 	for(var name in this.peers) {
@@ -60,7 +64,7 @@ Books.prototype.removeBrowserFromBooks = function(browser) {
 var _books = new Books();
 
 
-// TODO: put in its own file
+// TODO: put in its own module
 function Browser(socket) {
 	this.socket = socket
 	this.myName = "unknown";
@@ -123,6 +127,9 @@ Browser.prototype.sendMessageToPeer = function(peerName, message) {
 		peerBrowser.socket.emit("message", this.myName, message);
 	}
 }
+
+// ------ \\
+// UNUSED:
 Browser.prototype.sendIpAddressess = function() {
 	// TODO: maybe address of peer are required here ? or this address ?
 	// TODO: why are we sending server ip address here ?? makes no sense ! 
@@ -136,6 +143,8 @@ Browser.prototype.sendIpAddressess = function() {
 		});
 	}
 }
+//\\ ------ //
+
 Browser.prototype.disconnected = function() {
 	_books.removeBrowserFromBooks(this);
 	this.sendContactList();
@@ -154,8 +163,9 @@ io.sockets.on('connection', function(socket) {
 	socket.on('login', browser.login.bind(browser));
 	socket.on('callAttempt', browser.callAttempt.bind(browser));
 
-
+	// unused:
 	socket.on('ipaddr', browser.sendIpAddressess.bind(browser));
+	
 	socket.on('bye', function(){
 		console.log('received bye');
 	});

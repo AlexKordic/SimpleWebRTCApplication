@@ -44,6 +44,8 @@
 		}
 
 		function showMuteState(knownEventName, params) {
+			// params.isAudio: true for audio, false for video
+			//   params.state: true for on, false for off
 			if(params.isAudio) {
 				var element = jQuery("#audioMuteIndicatorElement");
 				if(params.state) {

@@ -2,22 +2,34 @@
 
 
 
-
-
 function ConferenceMachinery(myName, remoteVideo, localVideo) {
 	var self = this;
+	// true when peerConnection is valid
 	this._started = false;
+	// our audio and video
 	this._localStream = false;
+	// we talk only to one peer :)
 	this._partnerName = false;
+	// partner's audio and video
 	this._remoteStream = false;
+	// am i initiating side, server has chance to decide on this :)
 	this._shouldICall = false;
+	// mute state
 	this._soundEnabled = true;
+	// mute state
 	this._videoEnabled = true;
+
+	// reference to video element for streaming manipulation
 	this.remoteVideo = remoteVideo;
+	// reference to video element for streaming manipulation
 	this.localVideo = localVideo;
+	// this is our ID, other will call us by this string
 	this.myName = myName;
 
+	// register to contents of this map, here we are using jQuery's event system
 	this.events = {};
+
+	// single connection, in larger app use namespaces
 	this.socket = io.connect();
 	
 	this.socket.on("connect", function() {
@@ -26,18 +38,23 @@ function ConferenceMachinery(myName, remoteVideo, localVideo) {
 	});
 
 	this.socket.on('log', function(array) {
+		// comment out if annoyed
 		console.log.apply(console, array);
 	});
 
+	// pass-trough events:
 	this.raiseSocketEvent("loginError");
 	this.raiseSocketEvent("loginSuccess");
 	this.raiseSocketEvent("contactsUpdate");
 	this.raiseSocketEvent("callAttemptUnsuccessful"); // answer to callAttempt
 	this.raiseSocketEvent("expectCall"); // propagate to parent for missed call
+
+	// additional events:
 	this.events.callBlocked = jQuery.Callbacks("unique");
 	this.events.answeringCall = jQuery.Callbacks("unique");
 	this.events.mute = jQuery.Callbacks("unique"); // not from server
 
+	// when ordered initiate call
 	this.socket.on("callNow", function(contact) {
 		console.log("callNow", contact);
 		self._partnerName = contact.name;
@@ -45,16 +62,20 @@ function ConferenceMachinery(myName, remoteVideo, localVideo) {
 		self._shouldICall = true;
 		self.start();
 	});
+
+	// signaling goes trough here
 	this.socket.on("message", this.onMessage.bind(this))
 
+	// init resources:
 	this.startMyVideo();
 }
 ConferenceMachinery.prototype.call = function(contact) {
+	// Request permission from server to call this browser
 	var contactName = contact.name;
 	console.log("call contact", contactName);
 	this.socket.emit('callAttempt', contactName);
 }
-/// Just propagate event to parent
+/// Just propagate event to parent [mechanizm]
 ConferenceMachinery.prototype.raiseSocketEvent = function(eventName) {
 	var self = this;
 	self.events[eventName] = jQuery.Callbacks("unique"); // < creating event
@@ -62,6 +83,7 @@ ConferenceMachinery.prototype.raiseSocketEvent = function(eventName) {
 		self.raise(eventName, eventParams);
 	});
 }
+/// common point for firing events, it get logged
 ConferenceMachinery.prototype.raise = function(eventName, eventParams) {
 	// fire events to parent
 	console.log("raising event", eventName, eventParams);
@@ -97,7 +119,7 @@ ConferenceMachinery.prototype.sendMessage = function(message, specificPeerName) 
 	if(! specificPeerName) {
 		console.error("peerName missing !", message);
 		return;
-		// how to report this error ?
+		// TBD: how to report this error ?
 	}
 	console.log('I', this.myName, 'SENDING to=', specificPeerName, "msg=", message);
 	this.socket.emit('message', specificPeerName, message);
@@ -310,6 +332,8 @@ ConferenceMachinery.prototype._enableSoundOrVideo = function(shouldEnable, isSou
 			console.log("enable/disable video", shouldEnable);
 			conference.peerConnection.getLocalStreams()[0].getVideoTracks()[0].enabled = shouldEnable;
 		}
+
+		// Bad idea, even if it sounds good on paper:
 		// var streams = this.peerConnection.getLocalStreams();
 		// for(var streamIndex=0; streamIndex<streams.length; streamIndex) {
 		// 	var stream = streams[streamIndex];
@@ -336,80 +360,82 @@ ConferenceMachinery.prototype._enableSoundOrVideo = function(shouldEnable, isSou
 
 
 
-///////////////////////////////////////////
+// ///////////////////////////////////////////
 
-// Set Opus as the default audio codec if it's present.
-function preferOpus(sdp) {
-	var sdpLines = sdp.split('\r\n');
-	var mLineIndex;
-	// Search for m line.
-	for (var i = 0; i < sdpLines.length; i++) {
-		if (sdpLines[i].search('m=audio') !== -1) {
-			mLineIndex = i;
-			break;
-		}
-	}
-	if (mLineIndex === null) {
-		return sdp;
-	}
+// NOT needed at this point:
 
-	// If Opus is available, set it as the default in m line.
-	for (i = 0; i < sdpLines.length; i++) {
-		if (sdpLines[i].search('opus/48000') !== -1) {
-			var opusPayload = extractSdp(sdpLines[i], /:(\d+) opus\/48000/i);
-			if (opusPayload) {
-				sdpLines[mLineIndex] = setDefaultCodec(sdpLines[mLineIndex],
-					opusPayload);
-			}
-			break;
-		}
-	}
+// // Set Opus as the default audio codec if it's present.
+// function preferOpus(sdp) {
+// 	var sdpLines = sdp.split('\r\n');
+// 	var mLineIndex;
+// 	// Search for m line.
+// 	for (var i = 0; i < sdpLines.length; i++) {
+// 		if (sdpLines[i].search('m=audio') !== -1) {
+// 			mLineIndex = i;
+// 			break;
+// 		}
+// 	}
+// 	if (mLineIndex === null) {
+// 		return sdp;
+// 	}
 
-	// Remove CN in m line and sdp.
-	sdpLines = removeCN(sdpLines, mLineIndex);
+// 	// If Opus is available, set it as the default in m line.
+// 	for (i = 0; i < sdpLines.length; i++) {
+// 		if (sdpLines[i].search('opus/48000') !== -1) {
+// 			var opusPayload = extractSdp(sdpLines[i], /:(\d+) opus\/48000/i);
+// 			if (opusPayload) {
+// 				sdpLines[mLineIndex] = setDefaultCodec(sdpLines[mLineIndex],
+// 					opusPayload);
+// 			}
+// 			break;
+// 		}
+// 	}
 
-	sdp = sdpLines.join('\r\n');
-	return sdp;
-}
+// 	// Remove CN in m line and sdp.
+// 	sdpLines = removeCN(sdpLines, mLineIndex);
 
-function extractSdp(sdpLine, pattern) {
-	var result = sdpLine.match(pattern);
-	return result && result.length === 2 ? result[1] : null;
-}
+// 	sdp = sdpLines.join('\r\n');
+// 	return sdp;
+// }
 
-// Set the selected codec to the first in m line.
-function setDefaultCodec(mLine, payload) {
-	var elements = mLine.split(' ');
-	var newLine = [];
-	var index = 0;
-	for (var i = 0; i < elements.length; i++) {
-		if (index === 3) { // Format of media starts from the fourth.
-			newLine[index++] = payload; // Put target payload to the first.
-		}
-		if (elements[i] !== payload) {
-			newLine[index++] = elements[i];
-		}
-	}
-	return newLine.join(' ');
-}
+// function extractSdp(sdpLine, pattern) {
+// 	var result = sdpLine.match(pattern);
+// 	return result && result.length === 2 ? result[1] : null;
+// }
 
-// Strip CN from sdp before CN constraints is ready.
-function removeCN(sdpLines, mLineIndex) {
-	var mLineElements = sdpLines[mLineIndex].split(' ');
-	// Scan from end for the convenience of removing an item.
-	for (var i = sdpLines.length - 1; i >= 0; i--) {
-		var payload = extractSdp(sdpLines[i], /a=rtpmap:(\d+) CN\/\d+/i);
-		if (payload) {
-			var cnPos = mLineElements.indexOf(payload);
-			if (cnPos !== -1) {
-				// Remove CN payload from m line.
-				mLineElements.splice(cnPos, 1);
-			}
-			// Remove CN line in sdp
-			sdpLines.splice(i, 1);
-		}
-	}
+// // Set the selected codec to the first in m line.
+// function setDefaultCodec(mLine, payload) {
+// 	var elements = mLine.split(' ');
+// 	var newLine = [];
+// 	var index = 0;
+// 	for (var i = 0; i < elements.length; i++) {
+// 		if (index === 3) { // Format of media starts from the fourth.
+// 			newLine[index++] = payload; // Put target payload to the first.
+// 		}
+// 		if (elements[i] !== payload) {
+// 			newLine[index++] = elements[i];
+// 		}
+// 	}
+// 	return newLine.join(' ');
+// }
 
-	sdpLines[mLineIndex] = mLineElements.join(' ');
-	return sdpLines;
-}
+// // Strip CN from sdp before CN constraints is ready.
+// function removeCN(sdpLines, mLineIndex) {
+// 	var mLineElements = sdpLines[mLineIndex].split(' ');
+// 	// Scan from end for the convenience of removing an item.
+// 	for (var i = sdpLines.length - 1; i >= 0; i--) {
+// 		var payload = extractSdp(sdpLines[i], /a=rtpmap:(\d+) CN\/\d+/i);
+// 		if (payload) {
+// 			var cnPos = mLineElements.indexOf(payload);
+// 			if (cnPos !== -1) {
+// 				// Remove CN payload from m line.
+// 				mLineElements.splice(cnPos, 1);
+// 			}
+// 			// Remove CN line in sdp
+// 			sdpLines.splice(i, 1);
+// 		}
+// 	}
+
+// 	sdpLines[mLineIndex] = mLineElements.join(' ');
+// 	return sdpLines;
+// }
